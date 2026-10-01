@@ -21,6 +21,8 @@ internal sealed class LiveSocket : IDisposable
     private static readonly TimeSpan MaxBackoff = TimeSpan.FromSeconds(60);
 
     private readonly CancellationTokenSource _stop = new();
+    private readonly SemaphoreSlim _sendLock = new(1, 1);
+    private volatile ClientWebSocket? _current;
     private readonly Func<CancellationToken, Task<WebsocketCredentials>> _credentials;
     private readonly Action<ResourceUsage> _stats;
     private readonly Action<string> _status;
@@ -55,6 +57,28 @@ internal sealed class LiveSocket : IDisposable
     public void Start() => _ = Task.Run(RunAsync);
 
     public void Dispose() => _stop.Cancel();
+
+    /// <summary>Sends a line to the server's console. False when there is no live connection to send it on.</summary>
+    public async Task<bool> SendCommandAsync(string command)
+    {
+        ClientWebSocket? socket = _current;
+        if (socket is not { State: WebSocketState.Open })
+        {
+            return false;
+        }
+
+        try
+        {
+            using var timeout = CancellationTokenSource.CreateLinkedTokenSource(_stop.Token);
+            timeout.CancelAfter(TimeSpan.FromSeconds(10));
+            await SendAsync(socket, "send command", command, timeout.Token).ConfigureAwait(false);
+            return true;
+        }
+        catch (Exception e) when (e is WebSocketException or ObjectDisposedException or OperationCanceledException)
+        {
+            return false;
+        }
+    }
 
     private async Task RunAsync()
     {
@@ -116,6 +140,7 @@ internal sealed class LiveSocket : IDisposable
         WebsocketCredentials credentials = await _credentials(cancellation).ConfigureAwait(false);
 
         using var socket = new ClientWebSocket();
+        _current = socket;
         socket.Options.KeepAliveInterval = TimeSpan.FromSeconds(20);
         await socket.ConnectAsync(SocketAddress(credentials.Url), cancellation).ConfigureAwait(false);
         await SendAsync(socket, "auth", credentials.Token, cancellation).ConfigureAwait(false);
@@ -200,11 +225,20 @@ internal sealed class LiveSocket : IDisposable
         }
     }
 
-    private static Task SendAsync(ClientWebSocket socket, string name, string? argument, CancellationToken cancellation)
+    private async Task SendAsync(ClientWebSocket socket, string name, string? argument, CancellationToken cancellation)
     {
         string[] args = argument is null ? [] : [argument];
         byte[] frame = JsonSerializer.SerializeToUtf8Bytes(new { @event = name, args });
-        return socket.SendAsync(frame, WebSocketMessageType.Text, endOfMessage: true, cancellation);
+        // One send at a time: commands from the user race with the session's own frames.
+        await _sendLock.WaitAsync(cancellation).ConfigureAwait(false);
+        try
+        {
+            await socket.SendAsync(frame, WebSocketMessageType.Text, endOfMessage: true, cancellation).ConfigureAwait(false);
+        }
+        finally
+        {
+            _sendLock.Release();
+        }
     }
 
     /// <summary>Reads a frame's event name and first argument. False for anything that is not a frame.</summary>

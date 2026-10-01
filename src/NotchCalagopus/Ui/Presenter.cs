@@ -28,8 +28,7 @@ internal sealed record ViewState(
     PanelStatus Panel,
     string? PanelMessage,
     string? SelectedUuid,
-    bool LiveConnected,
-    IReadOnlyList<string> Console);
+    bool LiveConnected);
 
 /// <summary>
 /// Shows the monitor's state as cards and pill activities, and only tells Notch about what has
@@ -40,10 +39,10 @@ internal sealed class Presenter(
     PluginOptions options,
     AlertEngine alerts,
     Action<string> serverClicked,
-    Action summaryClicked)
+    Action summaryClicked,
+    Action<string> commandSubmitted)
 {
-    /// <summary>Console lines shown: three cards of two lines.</summary>
-    public const int ConsoleLines = 6;
+    private const string PageId = "server";
 
     private const string SummaryId = "summary";
     private const string OfflineId = "offline";
@@ -63,23 +62,17 @@ internal sealed class Presenter(
     private readonly Dictionary<string, CardFace> _faces = [];
     private readonly Dictionary<string, string> _activities = [];
     private string[] _cardIds = [];
+    private string? _pageShown;
 
     public void Render(ViewState view, IReadOnlyList<ServerEvent> events)
     {
         List<ServerView> shown = Choose(view);
 
-        // The selected server's stats and console come first: the tab shows three rows of three,
-        // so they fill it, and the overview sits below, a scroll away.
-        List<PluginCard> cards = [];
-        if (view.Servers.FirstOrDefault(s => s.Uuid == view.SelectedUuid) is { } selected)
-        {
-            cards.AddRange(StatCards(selected, view));
-            cards.AddRange(ConsoleCards(view));
-        }
-
-        cards.Add(Summary(view, view.Servers.Count - shown.Count));
+        List<PluginCard> cards = [Summary(view, view.Servers.Count - shown.Count)];
         cards.AddRange(shown.Select(server => ServerCard(server, view)));
         Apply(cards);
+
+        ShowPage(view);
 
         ShowOffline();
         ShowThresholds();
@@ -110,91 +103,82 @@ internal sealed class Presenter(
         ];
     }
 
-    /// <summary>Six cards, two rows: everything the panel reports about the server.</summary>
-    private List<PluginCard> StatCards(ServerView server, ViewState view)
+    /// <summary>Asks Notch to open the selected server's page.</summary>
+    public void OpenPage() => host.Pages.Open(PageId);
+
+    /// <summary>
+    /// The selected server's tab: every figure the panel reports on top, the console below. The
+    /// console's lines are appended by the caller as they arrive.
+    /// </summary>
+    private void ShowPage(ViewState view)
     {
+        if (view.Servers.FirstOrDefault(s => s.Uuid == view.SelectedUuid) is not { } server)
+        {
+            if (_pageShown is not null)
+            {
+                _pageShown = null;
+                host.Pages.Remove(PageId);
+            }
+
+            return;
+        }
+
         ResourceUsage? usage = server.Usage;
         bool active = server.State is DisplayState.Running or DisplayState.Starting or DisplayState.Stopping;
         bool hasUsage = usage is not null && active;
         string none = view.LiveConnected ? "–" : "…";
 
-        PluginCard Stat(string id, string label, string? value, string? detail, double? progress, Metric? metric) => new()
+        PluginStat Stat(string label, string? value, string? detail, double? progress, Metric? metric) => new()
         {
-            Id = "live-" + id,
             Label = label,
             Value = value,
             Detail = detail,
             Progress = progress,
             Color = metric is { } m && alerts.Breaches.Any(b => b.Uuid == server.Uuid && b.Metric == m) ? GlowColor.Amber : null,
-            Clicked = () => serverClicked(server.Uuid),
         };
 
-        return
+        PluginStat[] stats =
         [
-            new PluginCard
-            {
-                Id = "live-state",
-                Label = view.LiveConnected ? $"{server.Name} · LIVE" : $"{server.Name} · connecting",
-                Value = StateText(server.State),
-                Detail = $"Node {server.Info.NodeName}\nClick to stop live view",
-                Color = StateColor(server),
-                Clicked = () => serverClicked(server.Uuid),
-            },
+            new PluginStat { Label = "State", Value = StateText(server.State), Detail = $"Node {server.Info.NodeName}", Color = StateColor(server) },
             Stat(
-                "cpu", "CPU",
+                "CPU",
                 hasUsage ? Format.Percent(usage!.CpuAbsolute) : none,
                 server.Info.Limits is { Cpu: > 0 } cpu ? $"of {Format.Percent(cpu.Cpu)}" : "No limit",
-                hasUsage ? server.CpuPercent / 100 is { } cpuFraction ? Math.Clamp(cpuFraction, 0, 1) : null : null,
+                hasUsage && server.CpuPercent is { } cpuPercent ? Math.Clamp(cpuPercent / 100, 0, 1) : null,
                 Metric.Cpu),
             Stat(
-                "memory", "Memory",
+                "Memory",
                 hasUsage ? Format.Bytes(usage!.MemoryBytes) : none,
                 server.Info.Limits is { Memory: > 0 } ? $"of {Format.Bytes(server.MemoryLimitBytes)}" : "No limit",
                 hasUsage ? server.MemoryFraction : null,
                 Metric.Memory),
             Stat(
-                "disk", "Disk",
+                "Disk",
                 usage is not null ? Format.Bytes(usage.DiskBytes) : none,
                 server.Info.Limits is { Disk: > 0 } disk ? $"of {Format.Bytes(disk.Disk * 1024 * 1024)}" : "No limit",
                 usage is not null && server.DiskPercent is { } diskPercent ? Math.Clamp(diskPercent / 100, 0, 1) : null,
                 Metric.Disk),
-            Stat(
-                "network", "Network",
-                hasUsage && usage!.Network is { } net ? $"↓ {Format.Bytes(net.RxBytes)}" : none,
-                hasUsage && usage!.Network is { } net2 ? $"↑ {Format.Bytes(net2.TxBytes)}" : null,
-                null, null),
-            Stat(
-                "uptime", "Uptime",
-                hasUsage ? Format.Uptime(usage!.Uptime) : none,
-                null, null, null),
+            Stat("Download", hasUsage && usage!.Network is { } rx ? Format.Bytes(rx.RxBytes) : none, "Received", null, null),
+            Stat("Upload", hasUsage && usage!.Network is { } tx ? Format.Bytes(tx.TxBytes) : none, "Sent", null, null),
+            Stat("Uptime", hasUsage ? Format.Uptime(usage!.Uptime) : none, null, null, null),
         ];
-    }
 
-    /// <summary>
-    /// The newest console lines on one row of three cards, oldest on the left, two lines each.
-    /// A card is a third of the notch wide, so long lines are cut off by Notch.
-    /// </summary>
-    private static List<PluginCard> ConsoleCards(ViewState view)
-    {
-        const int PerCard = ConsoleLines / 3;
-
-        // Filled from the right, so the newest line stays in the same place as the buffer grows.
-        string[] lines = new string[ConsoleLines];
-        for (int i = 0; i < view.Console.Count; i++)
+        var page = new PluginPage
         {
-            lines[ConsoleLines - view.Console.Count + i] = view.Console[i];
-        }
+            Id = PageId,
+            Title = server.Name.Length > 18 ? server.Name[..17] + "…" : server.Name,
+            Stats = stats,
+            Input = commandSubmitted,
+            InputHint = view.LiveConnected ? $"Send a command to {server.Name}" : "Connecting to the console…",
+        };
 
-        return
-        [
-            .. Enumerable.Range(0, 3).Select(card => new PluginCard
-            {
-                Id = "console-" + card,
-                Label = card == 0 ? "Console" : " ",
-                Detail = string.Join("\n", lines.Skip(card * PerCard).Take(PerCard).Select(l => l ?? " ")),
-                Clicked = null,
-            }),
-        ];
+        // Only what is drawn counts, so an unchanged second of live data costs nothing.
+        string signature = $"{page.Title}\n{page.InputHint}\n{string.Join("\n", stats.Select(s => $"{s.Label}|{s.Value}|{s.Detail}|{s.Progress}|{s.Color}"))}";
+        if (signature != _pageShown)
+        {
+            _pageShown = signature;
+            host.Pages.Set(page);
+        }
     }
 
     private PluginCard Summary(ViewState view, int hidden)

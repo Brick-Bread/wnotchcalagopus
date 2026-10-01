@@ -16,6 +16,8 @@ public sealed partial class CalagopusPlugin : INotchPlugin
     /// <summary>Polls that fail in a row before the panel counts as unreachable.</summary>
     private const int FailuresBeforeUnreachable = 3;
 
+    private const string PageId = "server";
+
     private readonly Lock _gate = new();
     private readonly CancellationTokenSource _stop = new();
 
@@ -37,14 +39,13 @@ public sealed partial class CalagopusPlugin : INotchPlugin
     private LiveSocket? _live;
     private ResourceUsage? _liveUsage;
     private bool _liveConnected;
-    private readonly List<string> _console = [];
 
     public void Start(IPluginHost host)
     {
         _host = host;
         _options = PluginOptions.Load(host.Settings, host.Log);
         _alerts = new AlertEngine(_options);
-        _presenter = new Presenter(host, _options, _alerts, ServerClicked, SummaryClicked);
+        _presenter = new Presenter(host, _options, _alerts, ServerClicked, SummaryClicked, CommandSubmitted);
 
         if (_options.Problem is not null)
         {
@@ -260,10 +261,9 @@ public sealed partial class CalagopusPlugin : INotchPlugin
         _selectedUuid = null;
         _liveUsage = null;
         _liveConnected = false;
-        _console.Clear();
     }
 
-    /// <summary>Keeps the newest lines. The node sends the recent history after every (re)connect, which clears the buffer first.</summary>
+    /// <summary>Adds a console line to the server's page. The node sends the recent history after every (re)connect, which clears the console first.</summary>
     private void ConsoleLine(string text)
     {
         try
@@ -275,19 +275,11 @@ public sealed partial class CalagopusPlugin : INotchPlugin
                     return;
                 }
 
-                string line = AnsiCodes().Replace(text, "").Trim();
-                if (line.Length == 0)
+                string line = AnsiCodes().Replace(text, "").TrimEnd();
+                if (line.Length > 0)
                 {
-                    return;
+                    _host!.Pages.Append(PageId, line);
                 }
-
-                _console.Add(line);
-                if (_console.Count > Presenter.ConsoleLines)
-                {
-                    _console.RemoveAt(0);
-                }
-
-                Render([]);
             }
         }
         catch (Exception e)
@@ -309,9 +301,22 @@ public sealed partial class CalagopusPlugin : INotchPlugin
         _liveConnected = connected;
         if (connected)
         {
-            _console.Clear();
+            _host!.Pages.ClearConsole(PageId);
         }
     });
+
+    /// <summary>The user typed a line in the console. Runs on a background thread, so it may wait for the send.</summary>
+    private void CommandSubmitted(string command)
+    {
+        LiveSocket? live;
+        lock (_gate)
+        {
+            live = _stopped ? null : _live;
+        }
+
+        bool sent = live is not null && live.SendCommandAsync(command).GetAwaiter().GetResult();
+        _host!.Pages.Append(PageId, sent ? "> " + command : "! Not sent: the console is not connected.");
+    }
 
     /// <summary>Applies a push from the live connection and redraws. Runs on the connection's task.</summary>
     private void OnLive(Action apply)
@@ -350,13 +355,7 @@ public sealed partial class CalagopusPlugin : INotchPlugin
             {
                 _alerts.Acknowledge(uuid);
             }
-            else if (_selectedUuid == uuid)
-            {
-                Deselect();
-                _host!.Settings.Set(PluginOptions.SelectedServerKey, "");
-                _options = _options with { SelectedServer = "" };
-            }
-            else if (_servers.FirstOrDefault(s => s.Uuid == uuid) is { } server)
+            else if (_selectedUuid != uuid && _servers.FirstOrDefault(s => s.Uuid == uuid) is { } server)
             {
                 Select(uuid);
                 _host!.Settings.Set(PluginOptions.SelectedServerKey, server.Info.UuidShort);
@@ -364,6 +363,12 @@ public sealed partial class CalagopusPlugin : INotchPlugin
             }
 
             Render([]);
+
+            // The page exists once rendered. A click on the live server's card brings its tab back.
+            if (_selectedUuid == uuid && !_alerts.HasAlert(uuid))
+            {
+                _presenter!.OpenPage();
+            }
         }
     }
 
@@ -428,8 +433,7 @@ public sealed partial class CalagopusPlugin : INotchPlugin
                 _panel,
                 _panelMessage,
                 _selectedUuid,
-                _liveConnected,
-                [.. _console]),
+                _liveConnected),
             events);
     }
 }
