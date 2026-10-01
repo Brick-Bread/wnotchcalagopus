@@ -1,5 +1,6 @@
 using Notch.Core.Activities;
 using Notch.Core.Plugins;
+using NotchCalagopus.Api;
 using NotchCalagopus.Monitoring;
 
 namespace NotchCalagopus.Ui;
@@ -27,7 +28,8 @@ internal sealed record ViewState(
     PanelStatus Panel,
     string? PanelMessage,
     string? SelectedUuid,
-    bool LiveConnected);
+    bool LiveConnected,
+    IReadOnlyList<string> Console);
 
 /// <summary>
 /// Shows the monitor's state as cards and pill activities, and only tells Notch about what has
@@ -40,6 +42,9 @@ internal sealed class Presenter(
     Action<string> serverClicked,
     Action summaryClicked)
 {
+    /// <summary>Console lines shown: three cards of two lines.</summary>
+    public const int ConsoleLines = 6;
+
     private const string SummaryId = "summary";
     private const string OfflineId = "offline";
     private const string ThresholdId = "threshold";
@@ -63,7 +68,16 @@ internal sealed class Presenter(
     {
         List<ServerView> shown = Choose(view);
 
-        List<PluginCard> cards = [Summary(view, view.Servers.Count - shown.Count)];
+        // The selected server's stats and console come first: the tab shows three rows of three,
+        // so they fill it, and the overview sits below, a scroll away.
+        List<PluginCard> cards = [];
+        if (view.Servers.FirstOrDefault(s => s.Uuid == view.SelectedUuid) is { } selected)
+        {
+            cards.AddRange(StatCards(selected, view));
+            cards.AddRange(ConsoleCards(view));
+        }
+
+        cards.Add(Summary(view, view.Servers.Count - shown.Count));
         cards.AddRange(shown.Select(server => ServerCard(server, view)));
         Apply(cards);
 
@@ -93,6 +107,93 @@ internal sealed class Presenter(
                 .Take(options.MaxServerCards)
                 .OrderBy(x => x.index)
                 .Select(x => x.server),
+        ];
+    }
+
+    /// <summary>Six cards, two rows: everything the panel reports about the server.</summary>
+    private List<PluginCard> StatCards(ServerView server, ViewState view)
+    {
+        ResourceUsage? usage = server.Usage;
+        bool active = server.State is DisplayState.Running or DisplayState.Starting or DisplayState.Stopping;
+        bool hasUsage = usage is not null && active;
+        string none = view.LiveConnected ? "–" : "…";
+
+        PluginCard Stat(string id, string label, string? value, string? detail, double? progress, Metric? metric) => new()
+        {
+            Id = "live-" + id,
+            Label = label,
+            Value = value,
+            Detail = detail,
+            Progress = progress,
+            Color = metric is { } m && alerts.Breaches.Any(b => b.Uuid == server.Uuid && b.Metric == m) ? GlowColor.Amber : null,
+            Clicked = () => serverClicked(server.Uuid),
+        };
+
+        return
+        [
+            new PluginCard
+            {
+                Id = "live-state",
+                Label = view.LiveConnected ? $"{server.Name} · LIVE" : $"{server.Name} · connecting",
+                Value = StateText(server.State),
+                Detail = $"Node {server.Info.NodeName}\nClick to stop live view",
+                Color = StateColor(server),
+                Clicked = () => serverClicked(server.Uuid),
+            },
+            Stat(
+                "cpu", "CPU",
+                hasUsage ? Format.Percent(usage!.CpuAbsolute) : none,
+                server.Info.Limits is { Cpu: > 0 } cpu ? $"of {Format.Percent(cpu.Cpu)}" : "No limit",
+                hasUsage ? server.CpuPercent / 100 is { } cpuFraction ? Math.Clamp(cpuFraction, 0, 1) : null : null,
+                Metric.Cpu),
+            Stat(
+                "memory", "Memory",
+                hasUsage ? Format.Bytes(usage!.MemoryBytes) : none,
+                server.Info.Limits is { Memory: > 0 } ? $"of {Format.Bytes(server.MemoryLimitBytes)}" : "No limit",
+                hasUsage ? server.MemoryFraction : null,
+                Metric.Memory),
+            Stat(
+                "disk", "Disk",
+                usage is not null ? Format.Bytes(usage.DiskBytes) : none,
+                server.Info.Limits is { Disk: > 0 } disk ? $"of {Format.Bytes(disk.Disk * 1024 * 1024)}" : "No limit",
+                usage is not null && server.DiskPercent is { } diskPercent ? Math.Clamp(diskPercent / 100, 0, 1) : null,
+                Metric.Disk),
+            Stat(
+                "network", "Network",
+                hasUsage && usage!.Network is { } net ? $"↓ {Format.Bytes(net.RxBytes)}" : none,
+                hasUsage && usage!.Network is { } net2 ? $"↑ {Format.Bytes(net2.TxBytes)}" : null,
+                null, null),
+            Stat(
+                "uptime", "Uptime",
+                hasUsage ? Format.Uptime(usage!.Uptime) : none,
+                null, null, null),
+        ];
+    }
+
+    /// <summary>
+    /// The newest console lines on one row of three cards, oldest on the left, two lines each.
+    /// A card is a third of the notch wide, so long lines are cut off by Notch.
+    /// </summary>
+    private static List<PluginCard> ConsoleCards(ViewState view)
+    {
+        const int PerCard = ConsoleLines / 3;
+
+        // Filled from the right, so the newest line stays in the same place as the buffer grows.
+        string[] lines = new string[ConsoleLines];
+        for (int i = 0; i < view.Console.Count; i++)
+        {
+            lines[ConsoleLines - view.Console.Count + i] = view.Console[i];
+        }
+
+        return
+        [
+            .. Enumerable.Range(0, 3).Select(card => new PluginCard
+            {
+                Id = "console-" + card,
+                Label = card == 0 ? "Console" : " ",
+                Detail = string.Join("\n", lines.Skip(card * PerCard).Take(PerCard).Select(l => l ?? " ")),
+                Clicked = null,
+            }),
         ];
     }
 
@@ -179,33 +280,37 @@ internal sealed class Presenter(
         {
             Id = id,
             Label = !selected ? server.Name : view.LiveConnected ? $"{server.Name} · LIVE" : $"{server.Name} · connecting",
-            Value = server.State switch
-            {
-                DisplayState.Running => "Running",
-                DisplayState.Starting => "Starting",
-                DisplayState.Stopping => "Stopping",
-                DisplayState.Offline => "Offline",
-                DisplayState.Installing => "Installing",
-                DisplayState.InstallFailed => "Install failed",
-                DisplayState.Restoring => "Restoring",
-                DisplayState.RestoreFailed => "Restore failed",
-                DisplayState.Suspended => "Suspended",
-                _ => "No data",
-            },
+            Value = StateText(server.State),
             Detail = detail,
             Progress = active ? server.MemoryFraction : null,
-            Color = server.State switch
-            {
-                _ when offlineAlert => GlowColor.Red,
-                DisplayState.InstallFailed or DisplayState.RestoreFailed => GlowColor.Red,
-                _ when alerts.IsOverThreshold(server.Uuid) => GlowColor.Amber,
-                DisplayState.Running => GlowColor.Green,
-                DisplayState.Starting or DisplayState.Stopping or DisplayState.Installing or DisplayState.Restoring => GlowColor.Amber,
-                _ => null,
-            },
+            Color = StateColor(server),
             Clicked = () => serverClicked(server.Uuid),
         };
     }
+
+    private static string StateText(DisplayState state) => state switch
+    {
+        DisplayState.Running => "Running",
+        DisplayState.Starting => "Starting",
+        DisplayState.Stopping => "Stopping",
+        DisplayState.Offline => "Offline",
+        DisplayState.Installing => "Installing",
+        DisplayState.InstallFailed => "Install failed",
+        DisplayState.Restoring => "Restoring",
+        DisplayState.RestoreFailed => "Restore failed",
+        DisplayState.Suspended => "Suspended",
+        _ => "No data",
+    };
+
+    private GlowColor? StateColor(ServerView server) => server.State switch
+    {
+        _ when alerts.IsOfflineAlert(server.Uuid) => GlowColor.Red,
+        DisplayState.InstallFailed or DisplayState.RestoreFailed => GlowColor.Red,
+        _ when alerts.IsOverThreshold(server.Uuid) => GlowColor.Amber,
+        DisplayState.Running => GlowColor.Green,
+        DisplayState.Starting or DisplayState.Stopping or DisplayState.Installing or DisplayState.Restoring => GlowColor.Amber,
+        _ => null,
+    };
 
     private void Apply(List<PluginCard> cards)
     {

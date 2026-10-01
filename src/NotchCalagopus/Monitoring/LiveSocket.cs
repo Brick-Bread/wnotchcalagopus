@@ -25,6 +25,7 @@ internal sealed class LiveSocket : IDisposable
     private readonly Action<ResourceUsage> _stats;
     private readonly Action<string> _status;
     private readonly Action<bool> _connected;
+    private readonly Action<string>? _console;
     private readonly IPluginLog _log;
     private readonly TimeSpan _minBackoff;
 
@@ -32,14 +33,17 @@ internal sealed class LiveSocket : IDisposable
     /// <param name="stats">Called with each usage update.</param>
     /// <param name="status">Called with each power state: offline, starting, stopping or running.</param>
     /// <param name="connected">Called with true once the node accepts the token, and false when the connection ends.</param>
+    /// <param name="console">Called with each line of the server's console, starting with its recent history.</param>
     public LiveSocket(
         Func<CancellationToken, Task<WebsocketCredentials>> credentials,
         Action<ResourceUsage> stats,
         Action<string> status,
         Action<bool> connected,
         IPluginLog log,
-        TimeSpan? minBackoff = null)
+        TimeSpan? minBackoff = null,
+        Action<string>? console = null)
     {
+        _console = console;
         _credentials = credentials;
         _stats = stats;
         _status = status;
@@ -152,12 +156,26 @@ internal sealed class LiveSocket : IDisposable
 
                     // Usage is otherwise only pushed when it changes, which an idle server's does not.
                     await SendAsync(socket, "send stats", null, cancellation).ConfigureAwait(false);
+                    if (_console is not null)
+                    {
+                        await SendAsync(socket, "send logs", null, cancellation).ConfigureAwait(false);
+                    }
                     break;
 
                 case "stats":
                     if (ReadUsage(argument) is { } usage)
                     {
                         _stats(usage);
+                    }
+
+                    break;
+
+                case "console output":
+                case "install output":
+                case "daemon message":
+                    if (_console is not null && argument.ValueKind == JsonValueKind.String)
+                    {
+                        _console(argument.GetString()!);
                     }
 
                     break;

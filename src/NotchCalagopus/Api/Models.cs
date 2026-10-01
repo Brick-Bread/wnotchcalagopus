@@ -82,8 +82,18 @@ internal sealed record ResourceUsage
     /// <summary>Milliseconds.</summary>
     public long Uptime { get; init; }
 
+    public NetworkUsage? Network { get; init; }
+
     [JsonIgnore]
     public PowerState? Power => CalagopusJson.ParseState(State);
+}
+
+/// <summary>Bytes the server has moved since it started.</summary>
+internal sealed record NetworkUsage
+{
+    public long RxBytes { get; init; }
+
+    public long TxBytes { get; init; }
 }
 
 internal sealed record WebsocketCredentials

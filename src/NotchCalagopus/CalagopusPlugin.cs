@@ -11,7 +11,7 @@ namespace NotchCalagopus;
 /// The plugin's entry point. Polls the panel for the servers and their usage, keeps one live
 /// connection for the server the user picked, and hands what it learns to the presenter.
 /// </summary>
-public sealed class CalagopusPlugin : INotchPlugin
+public sealed partial class CalagopusPlugin : INotchPlugin
 {
     /// <summary>Polls that fail in a row before the panel counts as unreachable.</summary>
     private const int FailuresBeforeUnreachable = 3;
@@ -37,6 +37,7 @@ public sealed class CalagopusPlugin : INotchPlugin
     private LiveSocket? _live;
     private ResourceUsage? _liveUsage;
     private bool _liveConnected;
+    private readonly List<string> _console = [];
 
     public void Start(IPluginHost host)
     {
@@ -247,7 +248,8 @@ public sealed class CalagopusPlugin : INotchPlugin
             LiveStats,
             LiveStatus,
             LiveConnected,
-            _host!.Log);
+            _host!.Log,
+            console: ConsoleLine);
         _live.Start();
     }
 
@@ -258,14 +260,58 @@ public sealed class CalagopusPlugin : INotchPlugin
         _selectedUuid = null;
         _liveUsage = null;
         _liveConnected = false;
+        _console.Clear();
     }
+
+    /// <summary>Keeps the newest lines. The node sends the recent history after every (re)connect, which clears the buffer first.</summary>
+    private void ConsoleLine(string text)
+    {
+        try
+        {
+            lock (_gate)
+            {
+                if (_stopped || _selectedUuid is null)
+                {
+                    return;
+                }
+
+                string line = AnsiCodes().Replace(text, "").Trim();
+                if (line.Length == 0)
+                {
+                    return;
+                }
+
+                _console.Add(line);
+                if (_console.Count > Presenter.ConsoleLines)
+                {
+                    _console.RemoveAt(0);
+                }
+
+                Render([]);
+            }
+        }
+        catch (Exception e)
+        {
+            _host!.Log.Error("Could not show a console line.", e);
+        }
+    }
+
+    [System.Text.RegularExpressions.GeneratedRegex(@"\x1B\[[0-9;?]*[ -/]*[@-~]|\x1B[@-_]")]
+    private static partial System.Text.RegularExpressions.Regex AnsiCodes();
 
     private void LiveStats(ResourceUsage usage) => OnLive(() => _liveUsage = usage);
 
     private void LiveStatus(string state) =>
         OnLive(() => _liveUsage = (_liveUsage ?? new ResourceUsage()) with { State = state });
 
-    private void LiveConnected(bool connected) => OnLive(() => _liveConnected = connected);
+    private void LiveConnected(bool connected) => OnLive(() =>
+    {
+        _liveConnected = connected;
+        if (connected)
+        {
+            _console.Clear();
+        }
+    });
 
     /// <summary>Applies a push from the live connection and redraws. Runs on the connection's task.</summary>
     private void OnLive(Action apply)
@@ -382,7 +428,8 @@ public sealed class CalagopusPlugin : INotchPlugin
                 _panel,
                 _panelMessage,
                 _selectedUuid,
-                _liveConnected),
+                _liveConnected,
+                [.. _console]),
             events);
     }
 }
