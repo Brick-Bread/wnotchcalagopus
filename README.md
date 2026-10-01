@@ -8,11 +8,11 @@ A [Notch](https://github.com/Brick-Bread/WNotch) plugin that watches the servers
 2. Install the plugin from Notch's Settings (`Brick-Bread/wnotchcalagopus`) and switch it on. It writes its options to `%AppData%\Notch\plugin-data\brick-bread.calagopus\settings.json`.
 3. Set `panelUrl` and `apiKey` there, then switch the plugin off and on. The key is encrypted for your Windows account and removed from the file.
 
-Click a server card to start (or stop) its live connection; click an alerting card to dismiss the alert.
+The Plugins tab only shows an overview card; click it to dismiss alerts. Servers are on the plugin's own tab: pick one to open its stats and console, and use the back button to return to the list.
 
 ## Options
 
-`pollSeconds`, `maxServerCards`, `includeServers`, `excludeServers`, `selectedServer`, `showSelectedInPill`, `alertOffline`, `alertStateChanges`, `alertThresholds`, `alertPanelUnreachable`, `memoryPercent`, `diskPercent`, `cpuPercent` (0 turns a check off), `thresholdPolls`.
+`pollSeconds`, `includeServers`, `excludeServers`, `selectedServer`, `showSelectedInPill`, `alertOffline`, `alertStateChanges`, `alertThresholds`, `alertPanelUnreachable`, `memoryPercent`, `diskPercent`, `cpuPercent` (0 turns a check off), `thresholdPolls`.
 
 ## Build
 

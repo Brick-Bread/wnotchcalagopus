@@ -45,7 +45,7 @@ public sealed partial class CalagopusPlugin : INotchPlugin
         _host = host;
         _options = PluginOptions.Load(host.Settings, host.Log);
         _alerts = new AlertEngine(_options);
-        _presenter = new Presenter(host, _options, _alerts, ServerClicked, SummaryClicked, CommandSubmitted, PickServer, BackToList);
+        _presenter = new Presenter(host, _options, _alerts, SummaryClicked, CommandSubmitted, PickServer, BackToList);
 
         if (_options.Problem is not null)
         {
@@ -339,34 +339,6 @@ public sealed partial class CalagopusPlugin : INotchPlugin
         catch (Exception e)
         {
             _host!.Log.Error("Could not apply a live update.", e);
-        }
-    }
-
-    private void ServerClicked(string uuid)
-    {
-        lock (_gate)
-        {
-            if (_stopped)
-            {
-                return;
-            }
-
-            if (_alerts.HasAlert(uuid))
-            {
-                _alerts.Acknowledge(uuid);
-            }
-            else
-            {
-                PickLocked(uuid);
-            }
-
-            Render([]);
-
-            // The page exists once rendered. A click on the live server's card brings its tab back.
-            if (_selectedUuid == uuid && !_alerts.HasAlert(uuid))
-            {
-                _presenter!.OpenPage();
-            }
         }
     }
 

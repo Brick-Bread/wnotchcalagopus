@@ -38,7 +38,6 @@ internal sealed class Presenter(
     IPluginHost host,
     PluginOptions options,
     AlertEngine alerts,
-    Action<string> serverClicked,
     Action summaryClicked,
     Action<string> commandSubmitted,
     Action<string> serverPicked,
@@ -68,10 +67,8 @@ internal sealed class Presenter(
 
     public void Render(ViewState view, IReadOnlyList<ServerEvent> events)
     {
-        List<ServerView> shown = Choose(view);
-
-        List<PluginCard> cards = [Summary(view, view.Servers.Count - shown.Count)];
-        cards.AddRange(shown.Select(server => ServerCard(server, view)));
+        // Only the overview lives on the Plugins tab; the servers themselves are on the plugin's own tab.
+        List<PluginCard> cards = [Summary(view)];
         Apply(cards);
 
         ShowPage(view);
@@ -81,28 +78,6 @@ internal sealed class Presenter(
         ShowPanel(view);
         ShowLive(view);
         ShowEvents(events);
-    }
-
-    /// <summary>The servers that get a card: all of them, or those that most need looking at when there are too many.</summary>
-    private List<ServerView> Choose(ViewState view)
-    {
-        if (view.Servers.Count <= options.MaxServerCards)
-        {
-            return [.. view.Servers];
-        }
-
-        return
-        [
-            .. view.Servers
-                .Select((server, index) => (server, index))
-                .OrderByDescending(x => alerts.HasAlert(x.server.Uuid))
-                .ThenByDescending(x => x.server.Uuid == view.SelectedUuid)
-                .ThenByDescending(x => x.server.State != DisplayState.Offline)
-                .ThenBy(x => x.index)
-                .Take(options.MaxServerCards)
-                .OrderBy(x => x.index)
-                .Select(x => x.server),
-        ];
     }
 
     /// <summary>Asks Notch to open the selected server's page.</summary>
@@ -197,9 +172,7 @@ internal sealed class Presenter(
             {
                 Label = server.Name,
                 Value = StateText(server.State),
-                Detail = server.State is DisplayState.Running or DisplayState.Starting or DisplayState.Stopping && server.Usage is { } usage
-                    ? $"CPU {Format.Percent(usage.CpuAbsolute)} · {Format.Usage(usage.MemoryBytes, server.MemoryLimitBytes)} · Node {server.Info.NodeName}"
-                    : $"Node {server.Info.NodeName}",
+                Detail = RowDetail(server),
                 Color = StateColor(server),
                 Clicked = () => serverPicked(server.Uuid),
             }),
@@ -207,6 +180,24 @@ internal sealed class Presenter(
 
         var page = new PluginPage { Id = PageId, Title = "Servers", Choices = choices };
         SetPage(page, string.Join("\n", choices.Select(c => $"{c.Label}|{c.Value}|{c.Detail}|{c.Color}")));
+    }
+
+    /// <summary>The line under a server in the list: an alert if there is one, else what it is using.</summary>
+    private string RowDetail(ServerView server)
+    {
+        if (alerts.IsOfflineAlert(server.Uuid))
+        {
+            return "Went offline unexpectedly";
+        }
+
+        if (alerts.BreachOf(server.Uuid) is { } breach)
+        {
+            return Describe(breach);
+        }
+
+        return server.State is DisplayState.Running or DisplayState.Starting or DisplayState.Stopping && server.Usage is { } usage
+            ? $"CPU {Format.Percent(usage.CpuAbsolute)} · {Format.Usage(usage.MemoryBytes, server.MemoryLimitBytes)} · Node {server.Info.NodeName}"
+            : $"Node {server.Info.NodeName}";
     }
 
     private void SetPage(PluginPage page, string signature)
@@ -218,7 +209,7 @@ internal sealed class Presenter(
         }
     }
 
-    private PluginCard Summary(ViewState view, int hidden)
+    private PluginCard Summary(ViewState view)
     {
         int total = view.Servers.Count;
         int online = view.Servers.Count(s => s.State == DisplayState.Running);
@@ -238,11 +229,6 @@ internal sealed class Presenter(
             _ => $"{total - online} not running",
         };
 
-        if (hidden > 0 && view.Panel == PanelStatus.Ok)
-        {
-            detail += $" · {hidden} more not shown";
-        }
-
         return new PluginCard
         {
             Id = SummaryId,
@@ -260,52 +246,6 @@ internal sealed class Presenter(
                 _ => null,
             },
             Clicked = summaryClicked,
-        };
-    }
-
-    private PluginCard ServerCard(ServerView server, ViewState view)
-    {
-        bool selected = server.Uuid == view.SelectedUuid;
-        bool offlineAlert = alerts.IsOfflineAlert(server.Uuid);
-        Breach? breach = alerts.BreachOf(server.Uuid);
-        bool active = server.State is DisplayState.Running or DisplayState.Starting or DisplayState.Stopping;
-
-        string? detail;
-        if (offlineAlert)
-        {
-            detail = "Went offline unexpectedly\nClick to dismiss";
-        }
-        else if (active && server.Usage is { } usage)
-        {
-            string figures = $"CPU {Format.Percent(usage.CpuAbsolute)} · {Format.Usage(usage.MemoryBytes, server.MemoryLimitBytes)}";
-            detail = breach is not null
-                ? $"{figures}\n{Describe(breach)}, click to dismiss"
-                : $"{figures}\nUp {Format.Uptime(usage.Uptime)}";
-        }
-        else if (breach is not null)
-        {
-            detail = $"{Describe(breach)}\nClick to dismiss";
-        }
-        else
-        {
-            detail = server.State switch
-            {
-                DisplayState.Offline when server.Usage is { } stopped => $"Disk {Format.Bytes(stopped.DiskBytes)}",
-                DisplayState.Unknown => $"No data from node {server.Info.NodeName}",
-                _ => $"Node {server.Info.NodeName}",
-            };
-        }
-
-        string id = "server-" + server.Uuid;
-        return new PluginCard
-        {
-            Id = id,
-            Label = !selected ? server.Name : view.LiveConnected ? $"{server.Name} · LIVE" : $"{server.Name} · connecting",
-            Value = StateText(server.State),
-            Detail = detail,
-            Progress = active ? server.MemoryFraction : null,
-            Color = StateColor(server),
-            Clicked = () => serverClicked(server.Uuid),
         };
     }
 

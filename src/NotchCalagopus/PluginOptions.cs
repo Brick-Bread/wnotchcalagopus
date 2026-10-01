@@ -27,7 +27,6 @@ internal sealed record PluginOptions
 
     public int PollSeconds { get; init; } = 15;
 
-    public int MaxServerCards { get; init; } = 8;
 
     /// <summary>Names or ids of the only servers to show; empty for all.</summary>
     public IReadOnlyList<string> IncludeServers { get; init; } = [];
@@ -75,7 +74,6 @@ internal sealed record PluginOptions
                 : apiKey is null ? "Add apiKey to settings.json. Click to open it."
                 : null,
             PollSeconds = Math.Clamp(settings.Get("pollSeconds", defaults.PollSeconds), 15, 300),
-            MaxServerCards = Math.Clamp(settings.Get("maxServerCards", defaults.MaxServerCards), 1, 30),
             IncludeServers = Names(settings.Get<string[]>("includeServers", [])),
             ExcludeServers = Names(settings.Get<string[]>("excludeServers", [])),
             SelectedServer = settings.Get(SelectedServerKey, "").Trim(),
@@ -98,7 +96,6 @@ internal sealed record PluginOptions
         // Written back so every option shows up in settings.json for the user to edit.
         settings.Set(PanelUrlKey, url);
         settings.Set("pollSeconds", options.PollSeconds);
-        settings.Set("maxServerCards", options.MaxServerCards);
         settings.Set("includeServers", options.IncludeServers);
         settings.Set("excludeServers", options.ExcludeServers);
         settings.Set(SelectedServerKey, options.SelectedServer);
