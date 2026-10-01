@@ -40,7 +40,9 @@ internal sealed class Presenter(
     AlertEngine alerts,
     Action<string> serverClicked,
     Action summaryClicked,
-    Action<string> commandSubmitted)
+    Action<string> commandSubmitted,
+    Action<string> serverPicked,
+    Action backClicked)
 {
     private const string PageId = "server";
 
@@ -107,19 +109,15 @@ internal sealed class Presenter(
     public void OpenPage() => host.Pages.Open(PageId);
 
     /// <summary>
-    /// The selected server's tab: every figure the panel reports on top, the console below. The
-    /// console's lines are appended by the caller as they arrive.
+    /// The plugin's tab. With no server picked it lists them all; with one picked it shows every
+    /// figure the panel reports on top and the console below, and a button to go back to the list.
+    /// The console's lines are appended by the caller as they arrive.
     /// </summary>
     private void ShowPage(ViewState view)
     {
         if (view.Servers.FirstOrDefault(s => s.Uuid == view.SelectedUuid) is not { } server)
         {
-            if (_pageShown is not null)
-            {
-                _pageShown = null;
-                host.Pages.Remove(PageId);
-            }
-
+            ShowList(view);
             return;
         }
 
@@ -170,10 +168,49 @@ internal sealed class Presenter(
             Stats = stats,
             Input = commandSubmitted,
             InputHint = view.LiveConnected ? $"Send a command to {server.Name}" : "Connecting to the console…",
+            Back = backClicked,
+            BackLabel = "Servers",
         };
 
         // Only what is drawn counts, so an unchanged second of live data costs nothing.
         string signature = $"{page.Title}\n{page.InputHint}\n{string.Join("\n", stats.Select(s => $"{s.Label}|{s.Value}|{s.Detail}|{s.Progress}|{s.Color}"))}";
+        SetPage(page, signature);
+    }
+
+    /// <summary>The server list: one row per server, click one to open it.</summary>
+    private void ShowList(ViewState view)
+    {
+        if (view.Servers.Count == 0)
+        {
+            if (_pageShown is not null)
+            {
+                _pageShown = null;
+                host.Pages.Remove(PageId);
+            }
+
+            return;
+        }
+
+        PluginChoice[] choices =
+        [
+            .. view.Servers.Select(server => new PluginChoice
+            {
+                Label = server.Name,
+                Value = StateText(server.State),
+                Detail = server.State is DisplayState.Running or DisplayState.Starting or DisplayState.Stopping && server.Usage is { } usage
+                    ? $"CPU {Format.Percent(usage.CpuAbsolute)} · {Format.Usage(usage.MemoryBytes, server.MemoryLimitBytes)} · Node {server.Info.NodeName}"
+                    : $"Node {server.Info.NodeName}",
+                Color = StateColor(server),
+                Clicked = () => serverPicked(server.Uuid),
+            }),
+        ];
+
+        var page = new PluginPage { Id = PageId, Title = "Servers", Choices = choices };
+        SetPage(page, string.Join("\n", choices.Select(c => $"{c.Label}|{c.Value}|{c.Detail}|{c.Color}")));
+    }
+
+    private void SetPage(PluginPage page, string signature)
+    {
         if (signature != _pageShown)
         {
             _pageShown = signature;

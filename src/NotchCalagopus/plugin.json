@@ -1,10 +1,10 @@
 {
   "id": "brick-bread.calagopus",
   "name": "Calagopus servers",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "author": "Brick_Bread",
   "description": "Watches the servers on a Calagopus panel: state and usage on cards, alerts in the pill, a tab with live stats and an interactive console for the server you pick. Connects to the panel URL you configure, using your API key.",
   "assembly": "NotchCalagopus.dll",
   "repository": "Brick-Bread/wnotchcalagopus",
-  "apiVersion": 3
+  "apiVersion": 4
 }

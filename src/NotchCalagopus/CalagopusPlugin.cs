@@ -45,7 +45,7 @@ public sealed partial class CalagopusPlugin : INotchPlugin
         _host = host;
         _options = PluginOptions.Load(host.Settings, host.Log);
         _alerts = new AlertEngine(_options);
-        _presenter = new Presenter(host, _options, _alerts, ServerClicked, SummaryClicked, CommandSubmitted);
+        _presenter = new Presenter(host, _options, _alerts, ServerClicked, SummaryClicked, CommandSubmitted, PickServer, BackToList);
 
         if (_options.Problem is not null)
         {
@@ -355,11 +355,9 @@ public sealed partial class CalagopusPlugin : INotchPlugin
             {
                 _alerts.Acknowledge(uuid);
             }
-            else if (_selectedUuid != uuid && _servers.FirstOrDefault(s => s.Uuid == uuid) is { } server)
+            else
             {
-                Select(uuid);
-                _host!.Settings.Set(PluginOptions.SelectedServerKey, server.Info.UuidShort);
-                _options = _options with { SelectedServer = server.Info.UuidShort };
+                PickLocked(uuid);
             }
 
             Render([]);
@@ -369,6 +367,49 @@ public sealed partial class CalagopusPlugin : INotchPlugin
             {
                 _presenter!.OpenPage();
             }
+        }
+    }
+
+    /// <summary>A row of the server list was clicked.</summary>
+    private void PickServer(string uuid)
+    {
+        lock (_gate)
+        {
+            if (_stopped)
+            {
+                return;
+            }
+
+            PickLocked(uuid);
+            Render([]);
+        }
+    }
+
+    /// <summary>The back button: drops the live connection and shows the list again.</summary>
+    private void BackToList()
+    {
+        lock (_gate)
+        {
+            if (_stopped)
+            {
+                return;
+            }
+
+            Deselect();
+            _host!.Pages.ClearConsole(PageId);
+            _host.Settings.Set(PluginOptions.SelectedServerKey, "");
+            _options = _options with { SelectedServer = "" };
+            Render([]);
+        }
+    }
+
+    private void PickLocked(string uuid)
+    {
+        if (_selectedUuid != uuid && _servers.FirstOrDefault(s => s.Uuid == uuid) is { } server)
+        {
+            Select(uuid);
+            _host!.Settings.Set(PluginOptions.SelectedServerKey, server.Info.UuidShort);
+            _options = _options with { SelectedServer = server.Info.UuidShort };
         }
     }
 
