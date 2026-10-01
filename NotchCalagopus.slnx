@@ -1,0 +1,8 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/NotchCalagopus/NotchCalagopus.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/NotchCalagopus.Tests/NotchCalagopus.Tests.csproj" />
+  </Folder>
+</Solution>

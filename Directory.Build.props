@@ -1,0 +1,13 @@
+<Project>
+
+  <PropertyGroup>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <!-- The plugin API lives in Notch.Core.dll, next to Notch.exe. It is not on NuGet, so the
+         release workflow builds it from the Notch source and passes its path in. -->
+    <NotchCorePath Condition="'$(NotchCorePath)' == ''">$(LocalAppData)\Programs\Notch\Notch.Core.dll</NotchCorePath>
+  </PropertyGroup>
+
+</Project>

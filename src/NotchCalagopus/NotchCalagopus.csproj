@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <Version>1.0.0</Version>
+    <!-- Makes the build output a complete plugin folder, dependencies included. -->
+    <EnableDynamicLoading>true</EnableDynamicLoading>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Notch supplies Notch.Core at run time, so it must not be copied into the plugin's folder. -->
+    <Reference Include="Notch.Core">
+      <HintPath>$(NotchCorePath)</HintPath>
+      <Private>false</Private>
+    </Reference>
+    <PackageReference Include="System.Security.Cryptography.ProtectedData" Version="10.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Update="plugin.json" CopyToOutputDirectory="PreserveNewest" />
+    <InternalsVisibleTo Include="NotchCalagopus.Tests" />
+  </ItemGroup>
+
+</Project>
