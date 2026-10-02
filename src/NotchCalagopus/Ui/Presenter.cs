@@ -41,7 +41,8 @@ internal sealed class Presenter(
     Action summaryClicked,
     Action<string> commandSubmitted,
     Action<string> serverPicked,
-    Action backClicked)
+    Action backClicked,
+    Action<string> powerRequested)
 {
     private const string PageId = "server";
 
@@ -145,11 +146,43 @@ internal sealed class Presenter(
             InputHint = view.LiveConnected ? $"Send a command to {server.Name}" : "Connecting to the console…",
             Back = backClicked,
             BackLabel = "Servers",
+            Actions = PowerActions(server, view),
         };
 
         // Only what is drawn counts, so an unchanged second of live data costs nothing.
-        string signature = $"{page.Title}\n{page.InputHint}\n{string.Join("\n", stats.Select(s => $"{s.Label}|{s.Value}|{s.Detail}|{s.Progress}|{s.Color}"))}";
+        string signature = $"{page.Title}\n{page.InputHint}\n{string.Join(",", page.Actions.Select(a => a.Enabled))}\n{string.Join("\n", stats.Select(s => $"{s.Label}|{s.Value}|{s.Detail}|{s.Progress}|{s.Color}"))}";
         SetPage(page, signature);
+    }
+
+    /// <summary>
+    /// Start, Restart, Stop and Kill, with only the ones that make sense for the state the
+    /// server is in switched on. All are off until the live connection that carries them is up.
+    /// </summary>
+    private PluginAction[] PowerActions(ServerView server, ViewState view)
+    {
+        DisplayState state = server.State;
+        bool live = view.LiveConnected;
+        bool off = live && state == DisplayState.Offline;
+        bool on = live && state is DisplayState.Running or DisplayState.Starting;
+        bool stopping = live && state == DisplayState.Stopping;
+
+        PluginAction Action(string label, string power, GlowColor? color, bool enabled, string hint, bool confirm = false) => new()
+        {
+            Label = label,
+            Color = color,
+            Enabled = enabled,
+            Confirm = confirm,
+            Hint = live ? hint : "Waiting for the console connection",
+            Clicked = () => powerRequested(power),
+        };
+
+        return
+        [
+            Action("Start", "start", GlowColor.Green, off, "Start the server"),
+            Action("Restart", "restart", GlowColor.Amber, on, "Stop the server, then start it again"),
+            Action("Stop", "stop", null, on, "Shut the server down gracefully"),
+            Action("Kill", "kill", GlowColor.Red, on || stopping, "Stop the server immediately. Unsaved data may be lost.", confirm: true),
+        ];
     }
 
     /// <summary>The server list: one row per server, click one to open it.</summary>

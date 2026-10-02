@@ -59,7 +59,12 @@ internal sealed class LiveSocket : IDisposable
     public void Dispose() => _stop.Cancel();
 
     /// <summary>Sends a line to the server's console. False when there is no live connection to send it on.</summary>
-    public async Task<bool> SendCommandAsync(string command)
+    public Task<bool> SendCommandAsync(string command) => SendEventAsync("send command", command);
+
+    /// <summary>Asks the node to start, stop, restart or kill the server. False when there is no live connection to send it on.</summary>
+    public Task<bool> SendPowerAsync(string action) => SendEventAsync("set state", action);
+
+    private async Task<bool> SendEventAsync(string name, string argument)
     {
         ClientWebSocket? socket = _current;
         if (socket is not { State: WebSocketState.Open })
@@ -71,7 +76,7 @@ internal sealed class LiveSocket : IDisposable
         {
             using var timeout = CancellationTokenSource.CreateLinkedTokenSource(_stop.Token);
             timeout.CancelAfter(TimeSpan.FromSeconds(10));
-            await SendAsync(socket, "send command", command, timeout.Token).ConfigureAwait(false);
+            await SendAsync(socket, name, argument, timeout.Token).ConfigureAwait(false);
             return true;
         }
         catch (Exception e) when (e is WebSocketException or ObjectDisposedException or OperationCanceledException)

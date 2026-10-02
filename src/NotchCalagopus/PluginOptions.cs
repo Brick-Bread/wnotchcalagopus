@@ -3,10 +3,10 @@ using System.Text;
 using Notch.Core.Plugins;
 
 namespace NotchCalagopus;
-
 /// <summary>
-/// The plugin's options, read from its settings.json. Notch has no settings UI for plugins, so
-/// the user edits that file by hand and switches the plugin off and on.
+/// The plugin's options, read from its settings.json. They are listed in plugin.json, so Notch
+/// shows them in its Settings window under the plugin and restarts the plugin when they change.
+/// </summary>
 /// </summary>
 internal sealed record PluginOptions
 {
@@ -68,10 +68,10 @@ internal sealed record PluginOptions
         {
             PanelUrl = panelUrl,
             ApiKey = apiKey,
-            Problem = url.Length == 0 ? "Add panelUrl and apiKey to settings.json. Click to open it."
-                : panelUrl is null ? "panelUrl is not a web address. Click to open settings.json."
-                : unreadable ? "The stored key cannot be read here. Enter apiKey again."
-                : apiKey is null ? "Add apiKey to settings.json. Click to open it."
+            Problem = url.Length == 0 ? "Enter the panel address and API key in Notch Settings. Click to open it."
+                : panelUrl is null ? "The panel address is not a web address. Click to open Notch Settings."
+                : unreadable ? "The stored API key cannot be read here. Enter it again in Notch Settings."
+                : apiKey is null ? "Enter the API key in Notch Settings. Click to open it."
                 : null,
             PollSeconds = Math.Clamp(settings.Get("pollSeconds", defaults.PollSeconds), 15, 300),
             IncludeServers = Names(settings.Get<string[]>("includeServers", [])),
@@ -142,7 +142,7 @@ internal sealed record PluginOptions
         {
             // Encrypted by another Windows account or on another PC, or edited by hand.
             unreadable = true;
-            log.Warn("The stored API key could not be decrypted. Enter apiKey in settings.json again.");
+            log.Warn("The stored API key could not be decrypted. Enter the API key in Notch Settings again.");
         }
 
         return key;

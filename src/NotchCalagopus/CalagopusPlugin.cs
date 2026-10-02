@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using Notch.Core.Activities;
 using Notch.Core.Plugins;
 using NotchCalagopus.Api;
@@ -45,7 +44,7 @@ public sealed partial class CalagopusPlugin : INotchPlugin
         _host = host;
         _options = PluginOptions.Load(host.Settings, host.Log);
         _alerts = new AlertEngine(_options);
-        _presenter = new Presenter(host, _options, _alerts, SummaryClicked, CommandSubmitted, PickServer, BackToList);
+        _presenter = new Presenter(host, _options, _alerts, SummaryClicked, CommandSubmitted, PickServer, BackToList, PowerRequested);
 
         if (_options.Problem is not null)
         {
@@ -318,6 +317,19 @@ public sealed partial class CalagopusPlugin : INotchPlugin
         _host!.Pages.Append(PageId, sent ? "> " + command : "! Not sent: the console is not connected.");
     }
 
+    /// <summary>A power button was clicked. Runs on a background thread, so it may wait for the send.</summary>
+    private void PowerRequested(string action)
+    {
+        LiveSocket? live;
+        lock (_gate)
+        {
+            live = _stopped ? null : _live;
+        }
+
+        bool sent = live is not null && live.SendPowerAsync(action).GetAwaiter().GetResult();
+        _host!.Pages.Append(PageId, sent ? $"[power] {action} requested" : $"! {action} not sent: the console is not connected.");
+    }
+
     /// <summary>Applies a push from the live connection and redraws. Runs on the connection's task.</summary>
     private void OnLive(Action apply)
     {
@@ -409,18 +421,9 @@ public sealed partial class CalagopusPlugin : INotchPlugin
         }
     }
 
-    private void OpenSettings()
-    {
-        try
-        {
-            string path = Path.Combine(_host!.DataDirectory, "settings.json");
-            Process.Start(new ProcessStartInfo(path) { UseShellExecute = true })?.Dispose();
-        }
-        catch (Exception e)
-        {
-            _host!.Log.Warn($"Could not open settings.json: {e.Message}");
-        }
-    }
+    /// <summary>Opens Notch's Settings window, where the plugin's options are.</summary>
+    private void OpenSettings() => _host!.Shell.OpenSettings();
+
 
     /// <summary>Must be called with the gate held, except from <see cref="Start"/>.</summary>
     private void Render(IReadOnlyList<ServerEvent> events)
